@@ -26,7 +26,7 @@ def index():
 
 def run_unbind_process(access_token):
     if not os.path.exists("HLO.txt"):
-        return "Error: 'HLO.txt' file not found on the server!"
+        return "Error: 'HLO.txt' file not found on the server! Please upload HLO.txt via Telegram."
     
     try:
         url_info = "https://100067.connect.garena.com/game/account_security/bind:get_bind_info"
@@ -42,7 +42,7 @@ def run_unbind_process(access_token):
         return "No bound email found or invalid access token provided."
 
     try:
-        with open("HLO.txt", "r") as f:
+        with open("HLO.txt", "r", encoding="utf-8", errors="ignore") as f:
             codes = [line.strip() for line in f if line.strip()]
     except Exception as e:
         return f"Failed to read HLO.txt: {str(e)}"
@@ -107,7 +107,28 @@ def run_unbind_process(access_token):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Welcome to DRK Auto-Unbind Bot!\nSend `/unbind <your_access_token>` to run the process.")
+    bot.reply_to(
+        message, 
+        "Welcome to DRK Auto-Unbind Bot!\n\n"
+        "• Send `/unbind <your_access_token>` to run the process.\n"
+        "• **Upload any `.txt` file directly here** to update your `HLO.txt` on the server.", 
+        parse_mode="Markdown"
+    )
+
+@bot.message_handler(content_types=['document'])
+def handle_docs(message):
+    try:
+        # File info fetch karein
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # Server par HLO.txt ke naam se save kar dein
+        with open("HLO.txt", 'wb') as new_file:
+            new_file.write(downloaded_file)
+            
+        bot.reply_to(message, "✅ **HLO.txt** successfully updated and saved on the server!", parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Failed to update HLO.txt: {str(e)}")
 
 @bot.message_handler(commands=['unbind'])
 def handle_unbind(message):
